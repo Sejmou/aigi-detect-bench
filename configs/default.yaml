@@ -1,0 +1,28 @@
+# Paths
+data:
+  real_dir: data/real
+  fake_dir: data/fake
+  # fraction of data used for fitting the probe; remainder split 50/50
+  # into calibration and test
+  train_frac: 0.6
+  seed: 42
+  max_images_per_class: null   # set an int to subsample for quick runs
+
+detector:
+  name: clip_linear            # key in aigi_bench.detectors.REGISTRY
+  clip_model: ViT-L-14
+  clip_pretrained: openai
+  batch_size: 64
+  device: cuda                 # falls back to cpu automatically
+
+# Robustness sweep (NTIRE-style benign transformations).
+# Each entry: transform name -> list of intensities. "clean" is always run.
+perturbations:
+  jpeg: [90, 75, 60, 40]        # quality factor
+  resize: [0.5, 0.75, 1.5, 2.0] # scale factor (bilinear, back to original size optional)
+  blur: [0.5, 1.0, 2.0]         # gaussian sigma
+  crop: [0.9, 0.75, 0.5]        # retained area fraction, center crop
+
+eval:
+  tpr_at_fpr: [0.01, 0.05]
+  out_dir: outputs

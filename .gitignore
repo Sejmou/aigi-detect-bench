@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+outputs/
+data/
+checkpoints/
+third_party/
+*.joblib
+.ruff_cache/
+.pytest_cache/
+dist/
+!data/real/.gitkeep
+!data/fake/.gitkeep
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+.DS_Store
