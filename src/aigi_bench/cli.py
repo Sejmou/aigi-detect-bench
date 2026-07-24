@@ -13,6 +13,7 @@ from .calibrate import calibrate as run_calibrate
 from .data import load_image, make_splits
 from .eval import robustness_sweep
 from .manifest import build_manifest
+from .normalize import normalize_corpus
 
 
 def _load_config(path: str) -> dict:
@@ -58,6 +59,22 @@ def cmd_manifest(cfg: dict) -> None:
         .sort("label", "generator", nulls_last=False)
     )
     print(df.group_by("split").agg(pl.len().alias("n")).sort("split"))
+
+
+def cmd_normalize(cfg: dict) -> None:
+    import polars as pl
+
+    n = cfg["normalize"]
+    out_dir = Path(cfg["manifest"].get("out_dir", cfg["eval"]["out_dir"]))
+    df = normalize_corpus(
+        manifest_path=out_dir / "manifest.parquet",
+        out_root=n["out_root"],
+        seed=cfg["data"].get("seed", 42),
+        edge=n.get("edge", 512),
+        workers=n.get("workers"),
+    )
+    print(f"{df.height} normalized -> {n['out_root']}")
+    print(df.group_by("label").agg(pl.len().alias("n")).sort("label"))
 
 
 def cmd_fit(cfg: dict) -> None:
@@ -107,13 +124,17 @@ def cmd_calibrate(cfg: dict, target_fpr: float) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(prog="aigi-bench")
-    ap.add_argument("command", choices=["manifest", "fit", "eval", "calibrate"])
+    ap.add_argument(
+        "command", choices=["manifest", "normalize", "fit", "eval", "calibrate"]
+    )
     ap.add_argument("--config", default="configs/default.yaml")
     ap.add_argument("--target-fpr", type=float, default=0.05)
     args = ap.parse_args()
     cfg = _load_config(args.config)
     if args.command == "manifest":
         cmd_manifest(cfg)
+    elif args.command == "normalize":
+        cmd_normalize(cfg)
     elif args.command == "fit":
         cmd_fit(cfg)
     elif args.command == "eval":

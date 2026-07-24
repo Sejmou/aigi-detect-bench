@@ -7,6 +7,13 @@ manifest:
   out_dir: outputs
   probe_dimensions: true   # read w/h/format headers (needed to audit the JPEG-vs-PNG confound)
 
+# Normalization: strip format/resolution as a class signal. See normalize.py.
+normalize:
+  out_root: /data/out/aigi-detect/normalized
+  edge: 512                # 1.0% of source reals fall below this; 20% would at 640
+  quality_band: [85, 95]   # per-image random JPEG quality, seeded by source path
+  workers: null            # null = one per core
+
 # Paths
 data:
   real_dir: data/real
