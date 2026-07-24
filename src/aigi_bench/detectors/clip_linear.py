@@ -23,7 +23,9 @@ from .base import Detector, register
 class ClipLinearProbe(Detector):
     def __init__(
         self,
-        clip_model: str = "ViT-L-14",
+        # QuickGELU variant: the OpenAI weights were trained with it, and plain
+        # "ViT-L-14" silently builds the model with standard GELU instead.
+        clip_model: str = "ViT-L-14-quickgelu",
         clip_pretrained: str = "openai",
         batch_size: int = 64,
         device: str = "cuda",

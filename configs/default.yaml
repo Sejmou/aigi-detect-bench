@@ -14,6 +14,12 @@ normalize:
   quality_band: [85, 95]   # per-image random JPEG quality, seeded by source path
   workers: null            # null = one per core
 
+# CLIP feature cache. Everything downstream is linear algebra on these, so the
+# GPU pass happens exactly once. See features.py.
+features:
+  cache_dir: /data/out/aigi-detect/features
+  num_workers: 10          # CPU workers applying perturbations ahead of the GPU
+
 # Paths
 data:
   real_dir: data/real
@@ -26,7 +32,10 @@ data:
 
 detector:
   name: clip_linear            # key in aigi_bench.detectors.REGISTRY
-  clip_model: ViT-L-14
+  # -quickgelu is required, not cosmetic: the OpenAI weights were trained with
+  # QuickGELU, and plain "ViT-L-14" instantiates standard GELU — open_clip warns
+  # about the mismatch and the resulting features measurably differ.
+  clip_model: ViT-L-14-quickgelu
   clip_pretrained: openai
   batch_size: 64
   device: cuda                 # falls back to cpu automatically
@@ -34,10 +43,17 @@ detector:
 # Robustness sweep (NTIRE-style benign transformations).
 # Each entry: transform name -> list of intensities. "clean" is always run.
 perturbations:
+  # tier 1 — single benign operations, as in the published protocols
   jpeg: [90, 75, 60, 40]        # quality factor
   resize: [0.5, 0.75, 1.5, 2.0] # scale factor (bilinear, back to original size optional)
   blur: [0.5, 1.0, 2.0]         # gaussian sigma
   crop: [0.9, 0.75, 0.5]        # retained area fraction, center crop
+  # tier 2 — laundering: compositions an image meets on a real distribution path
+  webp: [90, 75, 60]            # WebP round-trip quality
+  recompress: [2, 3, 5]         # successive JPEG generations at QF 75
+  screenshot: [1.0, 0.75]       # resample + PNG + re-crop
+  social: [80, 70, 55]          # resize-to-640 + unsharp + JPEG
+  noise_denoise: [2.0, 4.0, 8.0]  # add Gaussian noise, then median filter
 
 eval:
   tpr_at_fpr: [0.01, 0.05]

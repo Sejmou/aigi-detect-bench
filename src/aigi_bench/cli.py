@@ -12,6 +12,8 @@ from . import detectors
 from .calibrate import calibrate as run_calibrate
 from .data import load_image, make_splits
 from .eval import robustness_sweep
+from .experiments import run_all
+from .features import build_feature_cache
 from .manifest import build_manifest
 from .normalize import normalize_corpus
 
@@ -77,6 +79,42 @@ def cmd_normalize(cfg: dict) -> None:
     print(df.group_by("label").agg(pl.len().alias("n")).sort("label"))
 
 
+def cmd_features(cfg: dict) -> None:
+    f, d = cfg["features"], cfg["detector"]
+    out_dir = Path(cfg["manifest"].get("out_dir", cfg["eval"]["out_dir"]))
+    cache = build_feature_cache(
+        manifest_path=out_dir / "manifest_normalized.parquet",
+        cache_dir=f["cache_dir"],
+        perturbations=cfg.get("perturbations", {}),
+        clip_model=d.get("clip_model", "ViT-L-14"),
+        clip_pretrained=d.get("clip_pretrained", "openai"),
+        device=d.get("device", "cuda"),
+        batch_size=d.get("batch_size", 64),
+        num_workers=f.get("num_workers", 8),
+    )
+    print(f"feature cache -> {cache}")
+
+
+def cmd_experiments(cfg: dict) -> None:
+    out_dir = Path(cfg["manifest"].get("out_dir", cfg["eval"]["out_dir"]))
+    res = run_all(
+        manifest_path=out_dir / "manifest_normalized.parquet",
+        cache_dir=cfg["features"]["cache_dir"],
+        out_dir=out_dir,
+        fprs=cfg["eval"].get("tpr_at_fpr"),
+    )
+    for name, df in res.items():
+        print(f"\n=== {name} ===")
+        with pl_config():
+            print(df)
+
+
+def pl_config():
+    import polars as pl
+
+    return pl.Config(tbl_rows=40, tbl_cols=20, float_precision=4)
+
+
 def cmd_fit(cfg: dict) -> None:
     det = _build(cfg)
     splits = _splits(cfg)
@@ -125,7 +163,11 @@ def cmd_calibrate(cfg: dict, target_fpr: float) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(prog="aigi-bench")
     ap.add_argument(
-        "command", choices=["manifest", "normalize", "fit", "eval", "calibrate"]
+        "command",
+        choices=[
+            "manifest", "normalize", "features", "experiments",
+            "fit", "eval", "calibrate",
+        ],
     )
     ap.add_argument("--config", default="configs/default.yaml")
     ap.add_argument("--target-fpr", type=float, default=0.05)
@@ -135,6 +177,10 @@ def main() -> None:
         cmd_manifest(cfg)
     elif args.command == "normalize":
         cmd_normalize(cfg)
+    elif args.command == "features":
+        cmd_features(cfg)
+    elif args.command == "experiments":
+        cmd_experiments(cfg)
     elif args.command == "fit":
         cmd_fit(cfg)
     elif args.command == "eval":
