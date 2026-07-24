@@ -291,11 +291,58 @@ def plot_robustness(curves: pl.DataFrame, path: str | Path) -> None:
     plt.close(fig)
 
 
+def run_calibration(
+    manifest_path: str | Path,
+    cache_dir: str | Path,
+    targets: list[float] | None = None,
+    conditions: list[str] | None = None,
+) -> pl.DataFrame:
+    """Fit a threshold on calib, then report what it actually does on test.
+
+    Two questions, both operational. First, does a target FPR chosen on the
+    calibration split hold on unseen data (it should, given splits are grouped
+    by cover). Second, does a threshold tuned on *clean* images survive being
+    applied to processed ones without retuning — the README warns it will
+    over-fire, and whether that warning binds is worth measuring rather than
+    assuming.
+    """
+    from .calibrate import calibrate
+
+    targets = targets or [0.01, 0.05]
+    c = load_corpus(manifest_path, cache_dir, "clean")
+    y = c.df["label"].to_numpy()
+    tr, ca, te = (
+        c.mask(pl.col("split") == s) for s in ("train", "calib", "test")
+    )
+    probe = fit_probe(c.feats[tr], y[tr])
+    s_ca = _scores(probe, c.feats[ca])
+
+    rows = []
+    for target in targets:
+        cal = calibrate(y[ca], s_ca, target)
+        for cond in conditions or ["clean"]:
+            cc = load_corpus(manifest_path, cache_dir, cond)
+            s = _scores(probe, cc.feats[te])
+            yt = y[te]
+            rows.append({
+                "target_fpr": target,
+                "condition": cond,
+                "threshold": cal.threshold,
+                "temperature": cal.temperature,
+                "ece_before": cal.ece_before,
+                "ece_after": cal.ece_after,
+                "realized_fpr": float(((s >= cal.threshold) & (yt == 0)).sum() / (yt == 0).sum()),
+                "realized_tpr": float(((s >= cal.threshold) & (yt == 1)).sum() / (yt == 1).sum()),
+            })
+    return pl.DataFrame(rows)
+
+
 def run_all(
     manifest_path: str | Path,
     cache_dir: str | Path,
     out_dir: str | Path,
     fprs: list[float] | None = None,
+    score_cache_dir: str | Path | None = None,
 ) -> dict[str, pl.DataFrame]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -303,6 +350,17 @@ def run_all(
     rob = run_robustness(manifest_path, cache_dir, fprs)
     logo = run_logo(manifest_path, cache_dir, fprs=fprs)
     mat = run_matrix(manifest_path, cache_dir)
+
+    avail = available_conditions(cache_dir)
+    cal_conds = [c for c in ("clean", "jpeg_40", "blur_2", "social_55") if c in avail]
+    cal = run_calibration(manifest_path, cache_dir, fprs, cal_conds)
+    cal.write_csv(out_dir / "calibration.csv")
+
+    out = {"robustness": rob, "logo": logo, "matrix": mat, "calibration": cal}
+    if score_cache_dir and Path(score_cache_dir).exists():
+        ens = run_ensemble(manifest_path, cache_dir, score_cache_dir, fprs=fprs)
+        ens.write_csv(out_dir / "ensemble.csv")
+        out["ensemble"] = ens
 
     rob.write_csv(out_dir / "robustness.csv")
     logo.write_csv(out_dir / "logo.csv")
@@ -317,8 +375,9 @@ def run_all(
                 "manifest": str(manifest_path),
                 "cache_dir": str(cache_dir),
                 "conditions": available_conditions(cache_dir),
+                "n_conditions": len(available_conditions(cache_dir)),
             },
             indent=2,
         )
     )
-    return {"robustness": rob, "logo": logo, "matrix": mat}
+    return out

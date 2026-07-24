@@ -20,6 +20,22 @@ features:
   cache_dir: /data/out/aigi-detect/features
   num_workers: 10          # CPU workers applying perturbations ahead of the GPU
 
+# NPR (Tan et al. CVPR'24): low-level counterpart to the CLIP probe.
+# Checkpoint ships in the authors' repo; see scripts/checkpoints.md.
+npr:
+  checkpoint: /data/out/aigi-detect/checkpoints/NPR.pth
+  score_cache_dir: /data/out/aigi-detect/npr_scores
+  all_conditions: false    # true = score every perturbation, not just clean
+
+# Tier-4 white-box PGD. Separate from `perturbations` on purpose: this is an
+# adaptive attacker, not benign processing, and its numbers belong in their own
+# column. See attacks.py.
+attack:
+  n_per_class: 500         # balanced subset; each step is a fwd+bwd through ViT-L/14
+  epsilons_255: [1, 2, 4, 8]
+  steps: 10
+  batch_size: 24
+
 # Paths
 data:
   real_dir: data/real
