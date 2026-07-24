@@ -161,6 +161,72 @@ def build_feature_cache(
     return cache_dir
 
 
+class _PerturbedRaw(Dataset):
+    """Like _PerturbedImages but hands back a PIL image (no CLIP preprocessing).
+
+    Detectors other than the CLIP probe bring their own preprocessing, so the
+    perturbation still belongs in a worker but the normalisation does not.
+    """
+
+    def __init__(self, paths: Sequence[str], transform: Transform):
+        self.paths = list(paths)
+        self.transform = transform
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def __getitem__(self, i: int):
+        with Image.open(self.paths[i]) as im:
+            return self.transform(im.convert("RGB"))
+
+
+def build_score_cache(
+    detector,
+    manifest_path: str | Path,
+    cache_dir: str | Path,
+    perturbations: dict[str, list[float]],
+    batch_size: int = 256,
+    path_column: str = "normalized_path",
+) -> Path:
+    """Cache scalar detector scores per condition, mirroring the feature cache.
+
+    Used for detectors that are not a linear head on shared features (NPR), so
+    the ensemble and the robustness sweep can read them back without re-running
+    the model once per experiment.
+    """
+    manifest_path, cache_dir = Path(manifest_path), Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    df = pl.read_parquet(manifest_path)
+    paths = df[path_column].to_list()
+
+    for name, intensity, tf in build_grid(perturbations):
+        key = condition_key(name, intensity)
+        dst = cache_dir / f"{key}.npz"
+        if dst.exists():
+            continue
+        scores = []
+        for i in tqdm(
+            range(0, len(paths), batch_size), desc=f"{detector.name} {key}", leave=False
+        ):
+            chunk = paths[i : i + batch_size]
+            imgs = []
+            for p in chunk:
+                with Image.open(p) as im:
+                    imgs.append(tf(im.convert("RGB")))
+            scores.append(detector.scores(imgs))
+        np.savez(
+            dst,
+            scores=np.concatenate(scores).astype(np.float32),
+            paths=np.array(paths, dtype=object),
+        )
+    return cache_dir
+
+
+def load_scores(cache_dir: str | Path, key: str) -> tuple[np.ndarray, list[str]]:
+    d = np.load(Path(cache_dir) / f"{key}.npz", allow_pickle=True)
+    return d["scores"], list(d["paths"])
+
+
 def load_condition(cache_dir: str | Path, key: str) -> tuple[np.ndarray, list[str]]:
     """Load one cached condition as (features, paths)."""
     d = np.load(Path(cache_dir) / f"{key}.npz", allow_pickle=True)

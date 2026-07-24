@@ -47,7 +47,13 @@ class Corpus:
     feats: np.ndarray
 
     def mask(self, expr: pl.Expr) -> np.ndarray:
-        return self.df.select(expr.alias("m"))["m"].to_numpy()
+        """Boolean row mask. Nulls become False.
+
+        Necessary because `generator` is null for reals, so a predicate like
+        `generator == "sdxl-turbo"` evaluates to null on every real row rather
+        than False, and null does not support `~`.
+        """
+        return self.df.select(expr.fill_null(False).alias("m"))["m"].to_numpy().astype(bool)
 
     def subset(self, m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return self.feats[m], self.df["label"].to_numpy()[m]
@@ -185,6 +191,54 @@ def run_matrix(
             row[g_te] = summarize(y_all[m_te], _scores(probe, c.feats[m_te]))["auroc"]
         rows.append(row)
     return pl.DataFrame(rows)
+
+
+def run_ensemble(
+    manifest_path: str | Path,
+    cache_dir: str | Path,
+    score_cache_dir: str | Path,
+    condition: str = "clean",
+    fprs: list[float] | None = None,
+) -> pl.DataFrame:
+    """CLIP probe vs NPR vs their z-normalised mean, on the same test split.
+
+    The ensemble is only interesting if the members disagree, so the Spearman
+    correlation between the two score vectors is reported alongside: a mean of
+    two highly-correlated detectors buys nothing, and a *negative* correlation
+    means averaging actively destroys signal.
+    """
+    from scipy.stats import spearmanr
+
+    from .features import load_scores
+
+    c = load_corpus(manifest_path, cache_dir, condition)
+    tr = c.mask(pl.col("split") == "train")
+    te = c.mask(pl.col("split") == "test")
+    y_all = c.df["label"].to_numpy()
+
+    probe = fit_probe(c.feats[tr], y_all[tr])
+    clip_s = _scores(probe, c.feats[te])
+
+    raw, paths = load_scores(score_cache_dir, condition)
+    index = {p: i for i, p in enumerate(paths)}
+    order = np.array([index[p] for p in c.df["normalized_path"]], dtype=np.int64)
+    npr_s = raw[order][te]
+
+    y = y_all[te]
+
+    def z(v: np.ndarray) -> np.ndarray:
+        return (v - v.mean()) / (v.std() or 1.0)
+
+    rho = float(spearmanr(clip_s, npr_s).statistic)
+    rows = [
+        {"detector": "clip_linear", **summarize(y, clip_s, fprs)},
+        {"detector": "npr", **summarize(y, npr_s, fprs)},
+        {"detector": "mean_ensemble", **summarize(y, z(clip_s) + z(npr_s), fprs)},
+        # NPR runs below chance here, so the sign-corrected variant is reported
+        # too: it is what an operator who *measured* the inversion would deploy.
+        {"detector": "ensemble_npr_flipped", **summarize(y, z(clip_s) - z(npr_s), fprs)},
+    ]
+    return pl.DataFrame(rows).with_columns(pl.lit(rho).alias("spearman_clip_npr"))
 
 
 def plot_matrix(matrix: pl.DataFrame, path: str | Path, title: str) -> None:

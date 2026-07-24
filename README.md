@@ -152,6 +152,120 @@ These affect interpretation and are **not** fixed by the pipeline above:
    raw scores; `balanced_acc` and TPR@FPR are robust to this, plain accuracy
    is not.
 
+## Step 3 — the format confound is real, and it is enormous
+
+The clearest evidence that normalization was necessary comes from **NPR**
+(Tan et al., CVPR 2024), a published detector applied zero-shot:
+
+| | pooled AUROC |
+|---|---|
+| NPR on **raw** corpus (JPEG reals vs PNG fakes) | **0.9937** |
+| NPR on **normalized** corpus (both 512 px JPEG) | **0.4265** |
+
+Per-generator on raw it is 0.989–0.998; on normalized, 0.257–0.495. A detector
+that looks state-of-the-art on the raw corpus is, after the container tell is
+removed, **worse than chance**.
+
+Two things follow. First, any published number on a corpus where the classes
+differ in format or resolution should be treated as unproven. Second, NPR's
+inversion is itself informative: it reads high-frequency pixel residual as
+evidence of fakeness (it was trained on GAN upsampling artifacts), and modern
+diffusion output on album art is *smoother* than photographic covers, so the
+sign flips. This matches the file-size result above independently.
+
+**A hypothesis we tested and rejected:** reals arrive as JPEG and are
+re-encoded, giving them two compression generations against the fakes' one. We
+checked whether that asymmetry explained the inversion by giving the fakes a
+second generation — AUROC moved from 0.4265 to 0.4244, i.e. not at all. The
+compression-history asymmetry is *not* driving the result, so no correction for
+it is applied.
+
+## Step 4 — cross-generator generalization
+
+Trained on one generator (rows), tested on each (columns). Scored on the paired
+core, so every cell sees the same 2,000 source covers.
+
+| train ↓ / test → | dreamshaper-8 | pixeldit | sdxl-turbo | krea2-turbo | qwen-image | z-image |
+|---|---|---|---|---|---|---|
+| **dreamshaper-8** | 1.000 | 0.998 | 0.998 | 0.759 | 0.760 | 0.815 |
+| **pixeldit** | 1.000 | 0.999 | 0.999 | 0.746 | 0.755 | 0.799 |
+| **sdxl-turbo** | 0.999 | 0.997 | 0.999 | 0.723 | 0.715 | 0.775 |
+| **krea2-turbo** | 0.984 | 0.959 | 0.953 | 0.947 | 0.959 | 0.970 |
+| **qwen-image-2512** | 0.974 | 0.945 | 0.911 | 0.926 | 0.974 | 0.960 |
+| **z-image-turbo** | 0.983 | 0.962 | 0.955 | 0.920 | 0.936 | 0.973 |
+
+**The matrix is strongly asymmetric, and that is the main result.** Two clusters
+fall out:
+
+- **Cluster A — dreamshaper-8, pixeldit, sdxl-turbo.** Mutually detectable at
+  ~0.999, but a probe trained on any of them transfers to cluster B at only
+  0.72–0.82.
+- **Cluster B — krea2-turbo, qwen-image-2512, z-image-turbo.** Harder in
+  absolute terms (~0.95 self), but training on them generalizes *everywhere*,
+  including 0.91–0.98 on cluster A.
+
+The practical reading: **train on your hardest generator, not your most
+available one.** A probe trained on the easy cluster looks excellent in
+validation and degrades by ~0.25 AUROC on models it has not seen.
+
+The clustering is *not* explained by resolution — pixeldit is natively 1024 px
+yet sits with the two 512 px models. That is a useful internal control, because
+it means the split is not an artifact of the resampling asymmetry noted above.
+
+### Leave-one-generator-out
+
+Train on reals + five generators, test on the held-out sixth:
+
+| held out | in-dist AUROC | held-out AUROC | gap | held-out TPR@5%FPR |
+|---|---|---|---|---|
+| krea2-turbo | 0.983 | **0.932** | +0.051 | **0.683** |
+| qwen-image-2512 | 0.979 | **0.947** | +0.032 | **0.732** |
+| z-image-turbo | 0.979 | 0.965 | +0.014 | 0.822 |
+| sdxl-turbo | 0.976 | 0.992 | −0.015 | 0.962 |
+| pixeldit | 0.975 | 0.995 | −0.020 | 0.982 |
+| dreamshaper-8 | 0.974 | 0.999 | −0.025 | 1.000 |
+
+Negative gaps mean the held-out generator was *easier* than the training mix —
+which is exactly the cluster-A/B structure again, not a bug.
+
+**The number to quote is TPR@5%FPR, not AUROC.** krea2-turbo held out gives
+0.932 AUROC, which sounds strong, but only **68 % of its fakes are caught at a
+5 % false-positive rate**. Nearly a third slip through at an operating point
+that already misflags one real cover in twenty.
+
+## Step 5 — robustness to benign processing (tier 1)
+
+Probe trained on **clean** train-split features only, then evaluated on the test
+split under each perturbation. This is the honest setup: it measures how a
+detector trained on pristine data degrades in the wild. (Training on perturbed
+data is a mitigation to evaluate separately, not a baseline.)
+
+| condition | AUROC | Δ vs clean | TPR@5%FPR |
+|---|---|---|---|
+| clean | 0.9772 | — | 0.889 |
+| blur σ=0.5 | 0.9767 | −0.000 | 0.886 |
+| crop 0.9 | 0.9766 | −0.001 | 0.892 |
+| resize 2.0× | 0.9766 | −0.001 | 0.893 |
+| jpeg QF 90 | 0.9765 | −0.001 | 0.889 |
+| resize 0.5× | 0.9747 | −0.002 | 0.883 |
+| blur σ=1.0 | 0.9733 | −0.004 | 0.874 |
+| crop 0.5 | 0.9721 | −0.005 | 0.872 |
+| jpeg QF 75 | 0.9709 | −0.006 | 0.861 |
+| jpeg QF 40 | 0.9689 | −0.008 | 0.856 |
+| **blur σ=2.0** | **0.9625** | **−0.015** | 0.832 |
+
+**The CLIP probe is essentially immune to tier-1 processing.** The worst single
+transform costs 1.5 AUROC points. This is the expected behaviour of a *semantic*
+detector and it is the mirror image of NPR's collapse: CLIP reads content and
+composition, which JPEG and blur leave intact, while NPR reads a pixel residual
+that the same operations destroy.
+
+The practical consequence is that **cross-generator drift, not image processing,
+is this detector's failure mode.** Compare the numbers: benign processing costs
+at most 0.015 AUROC, while holding out krea2-turbo costs 0.045 and drops
+TPR@5%FPR from 0.889 to 0.683. Robustness effort spent on JPEG augmentation
+would be misdirected here.
+
 ## Plugging in published detectors
 
 The out-of-the-box literature checkpoints are distributed by their authors; this
