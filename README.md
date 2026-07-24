@@ -266,6 +266,37 @@ at most 0.015 AUROC, while holding out krea2-turbo costs 0.045 and drops
 TPR@5%FPR from 0.889 to 0.683. Robustness effort spent on JPEG augmentation
 would be misdirected here.
 
+## Calibration and operating points
+
+Threshold fitted on the held-out **calib** split, then applied unchanged to
+test:
+
+| target FPR | threshold | realized FPR (test) | TPR (test) |
+|---|---|---|---|
+| 1 % | +1.379 | 0.94 % | 0.732 |
+| 5 % | +0.323 | 4.11 % | 0.871 |
+
+Temperature scaling improves ECE from 0.0555 to 0.0413 (T = 0.719). The target
+FPRs transfer almost exactly, which is what the grouped-by-`spotify_id` split is
+buying — with content leakage across splits these numbers would be optimistic.
+
+Taking the 5 % threshold tuned on **clean** data and applying it to perturbed
+images without retuning:
+
+| applied to | FPR | TPR |
+|---|---|---|
+| clean | 0.041 | 0.871 |
+| jpeg QF 40 | 0.025 | 0.791 |
+| blur σ=2.0 | 0.047 | 0.828 |
+
+The README's standing warning is that a threshold tuned on pristine PNGs
+over-fires on recompressed images. **That does not happen here** — if anything
+JPEG makes it *under*-fire (FPR 0.041 → 0.025), because compression shifts both
+classes' scores down together rather than pulling them apart. The warning is
+sound in general; it just does not bind for a semantic detector whose features
+barely move under compression. Worth knowing which regime you are in before
+budgeting for per-condition recalibration.
+
 ## Step 6 — ensembling made things worse
 
 Both detectors on the same clean test split:
