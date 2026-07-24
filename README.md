@@ -266,6 +266,70 @@ at most 0.015 AUROC, while holding out krea2-turbo costs 0.045 and drops
 TPR@5%FPR from 0.889 to 0.683. Robustness effort spent on JPEG augmentation
 would be misdirected here.
 
+## Step 6 — ensembling made things worse
+
+Both detectors on the same clean test split:
+
+| detector | AUROC | TPR@5%FPR |
+|---|---|---|
+| clip_linear | **0.9772** | **0.889** |
+| npr (zero-shot) | 0.3941 | 0.023 |
+| mean ensemble (z-normalised) | 0.7910 | 0.397 |
+| ensemble, NPR sign-corrected | 0.8754 | 0.515 |
+
+Spearman correlation between the two score vectors: **−0.22**.
+
+**Averaging cost 0.19 AUROC versus the CLIP probe alone**, and flipping NPR's
+sign — the best case for an operator who had measured the inversion — still
+lands 0.10 below. This contradicts the guidance in the Method notes below
+("ensemble heterogeneous families for stability"), so it is worth being precise
+about why rather than just noting the exception:
+
+Score-level ensembling assumes each member is individually informative and that
+their errors are somewhat independent. Here the second member is *anti*-informative
+on this corpus, so the mean imports noise rather than complementary evidence.
+Heterogeneity is necessary for a useful ensemble but not sufficient — the
+members must first clear chance on the data you are actually deploying against.
+
+The general lesson is about the *order of operations*: validate each member on
+your own distribution first, and only then combine. Had we trusted NPR's
+published performance and ensembled without checking, we would have shipped a
+detector 0.19 AUROC worse than the trivial one-model baseline.
+
+## Step 7 — tier-4 white-box attack
+
+Tiers 1–2 are *non-adaptive*: the perturbation is chosen without consulting the
+detector. Tier 4 gives the attacker everything — CLIP weights, probe
+coefficients, gradients — and optimises directly against the decision function.
+PGD, 10 steps, L∞ budget in [0,1] pixel space, run end-to-end through CLIP
+preprocessing so the perturbation must survive resize and normalisation.
+
+Threat model: the attacker perturbs **only the fakes** (the goal is evading
+detection, not framing real photographs), on a balanced 500/500 test subset.
+
+| condition | AUROC | TPR@5%FPR |
+|---|---|---|
+| clean (same pipeline) | 0.9807 | 0.910 |
+| **PGD ε = 1/255** | **0.0388** | **0.0000** |
+
+At the smallest budget tested — a perturbation below the threshold of visibility
+— the detector does not merely lose signal, it **inverts**: AUROC 0.039 means it
+is reliably *wrong*, and TPR@5%FPR of exactly 0.000 means **not one** attacked
+fake is caught at that operating point.
+
+This is the expected result, and the reason it is reported in its own column
+rather than averaged with anything: a frozen-feature linear probe offers no
+resistance to a gradient-based attacker. The 0.98 clean number and the 0.04
+attacked number describe two different threat models, and quoting the first
+without the second would be misleading.
+
+**What this does and does not mean.** It does *not* say the detector is useless
+— against non-adaptive adversaries (the overwhelming majority of real cases) it
+holds at 0.96–0.98 through every benign transform we tested. It says the
+detector must not be the only control where a motivated adversary is in scope,
+which is the same conclusion the provenance literature reaches by a different
+route.
+
 ## Plugging in published detectors
 
 The out-of-the-box literature checkpoints are distributed by their authors; this
