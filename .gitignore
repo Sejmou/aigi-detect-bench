@@ -2,15 +2,13 @@
 __pycache__/
 *.pyc
 outputs/
-data/
+/data
 checkpoints/
 third_party/
 *.joblib
 .ruff_cache/
 .pytest_cache/
 dist/
-!data/real/.gitkeep
-!data/fake/.gitkeep
 
 # Python-generated files
 __pycache__/
