@@ -1,3 +1,12 @@
+# Corpus ingest: build manifest.parquet from the reconstruction corpus.
+# Reads the read-only source trees directly; nothing is written back to them.
+manifest:
+  real_dir: /data/in/real-coverart/guaranteed_real_top10k_covers
+  slop_root: /data/out/slop-imgs
+  meta_parquet: /data/in/real-coverart/guaranteed_real_top10k.parquet
+  out_dir: outputs
+  probe_dimensions: true   # read w/h/format headers (needed to audit the JPEG-vs-PNG confound)
+
 # Paths
 data:
   real_dir: data/real

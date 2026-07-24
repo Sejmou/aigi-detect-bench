@@ -3,26 +3,61 @@ name = "aigi-bench"
 version = "0.1.0"
 description = "Starter benchmark harness for AI-generated image detection: robustness curves, calibration, and pluggable detectors"
 readme = "README.md"
-requires-python = ">=3.10"
+# Matches the sibling img-captioning projects: upper bound because ML wheel
+# availability lags new Python releases.
+requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
 dependencies = [
-    "torch>=2.2",
-    "torchvision>=0.17",
+    "torch>=2.7.0",
+    "torchvision",
     "open-clip-torch>=2.24",
     "numpy>=1.26",
     "pillow>=10.0",
     "scikit-learn>=1.4",
+    "polars>=1.20",
+    "pyarrow>=25.0.0",
+    # pandas is still imported by eval.py (robustness_sweep builds its curve
+    # frame with it). New code uses polars; migrating eval.py is a follow-up.
     "pandas>=2.2",
     "matplotlib>=3.8",
     "tqdm>=4.66",
     "pyyaml>=6.0",
     "timm>=0.9",
+    "marimo>=0.23.14",
 ]
 
 [project.optional-dependencies]
 # Reconstruction-based detectors (DIRE / FIRE style) need diffusers.
 recon = ["diffusers>=0.27", "transformers>=4.40", "accelerate>=0.29"]
 dev = ["pytest>=8.0", "ruff>=0.4"]
+
+# --- PyTorch index configuration ---
+# Same deliberate setup as ../img-captioning/generate-captions/pyproject.toml:
+# torch/torchvision come from the PyTorch cu130 index, everything else from
+# PyPI. See https://docs.astral.sh/uv/guides/integration/pytorch/
+#
+# This matters here specifically because the CLIP ViT-L/14 probe in
+# detectors/clip_linear.py is the only GPU-bound stage in the pipeline — a
+# plain-PyPI torch resolves to a CPU-only wheel on this box and feature
+# extraction over ~25k images silently drops to hours.
+#
+# `explicit = true` keeps the index scoped to torch/torchvision only; the
+# sys_platform marker falls back to PyPI on macOS, which has no CUDA builds.
+# Driver 595.71.05 (CUDA 13.2) on an RTX 3090 (sm_86, Ampere) runs cu130
+# wheels fine — drivers are backward compatible.
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [project.scripts]
 aigi-bench = "aigi_bench.cli:main"
@@ -36,7 +71,7 @@ packages = ["src/aigi_bench"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
