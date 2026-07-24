@@ -63,6 +63,35 @@ Findings from running this harness on a reconstruction corpus of Spotify album
 art. **Read the caveats** — several affect how the numbers should be
 interpreted.
 
+## Summary
+
+Five results, in rough order of how much they should change what you do:
+
+1. **The format confound dominates everything.** NPR scores 0.994 AUROC on the
+   raw corpus and 0.427 after normalization. Any benchmark whose classes differ
+   in container format or resolution is measuring the container.
+2. **Cross-generator drift is the real failure mode, not image processing.**
+   Benign transforms cost at most 0.015 AUROC; holding out an unseen generator
+   costs up to 0.045 and drops TPR@5%FPR from 0.89 to 0.68.
+3. **Generalization is asymmetric — train on your hardest generator.** Probes
+   trained on the easy cluster transfer at 0.72–0.82; probes trained on the hard
+   cluster transfer at 0.91–0.98.
+4. **Ensembling is not free.** Averaging the CLIP probe with a below-chance NPR
+   cost 0.19 AUROC versus the probe alone.
+5. **Against an adaptive attacker there is no defence here.** PGD at ε=1/255
+   takes the probe to 0.039 AUROC and catches zero fakes at 5% FPR.
+
+Reproduce with:
+
+```bash
+uv run aigi-bench manifest    # join covers <-> reconstructions
+uv run aigi-bench normalize   # strip the format/resolution signal
+uv run aigi-bench features    # cache CLIP features per condition (GPU, ~1h)
+uv run aigi-bench npr-scores  # cache NPR scores
+uv run aigi-bench experiments # robustness, LOGO, 6x6 matrix, calibration, ensemble
+uv run aigi-bench attack      # tier-4 white-box PGD
+```
+
 ## What the corpus is
 
 10,000 real covers (all released pre-2014, before GANs, so "guaranteed real")
