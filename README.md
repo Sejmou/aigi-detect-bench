@@ -261,6 +261,47 @@ The clustering is *not* explained by resolution — pixeldit is natively 1024 px
 yet sits with the two 512 px models. That is a useful internal control, because
 it means the split is not an artifact of the resampling asymmetry noted above.
 
+### The same matrix in TPR@5%FPR — much worse than AUROC suggests
+
+AUROC is a ranking summary and hides the catch rate at a usable threshold. The
+identical six probes, same cells (`cross_generator_metrics.csv`):
+
+| train ↓ / test → | dreamshaper-8 | pixeldit | sdxl-turbo | krea2-turbo | qwen-image | z-image |
+|---|---|---|---|---|---|---|
+| **dreamshaper-8** | 1.000 | 1.000 | 1.000 | **0.109** | **0.109** | 0.160 |
+| **pixeldit** | 1.000 | 1.000 | 1.000 | **0.119** | **0.124** | 0.185 |
+| **sdxl-turbo** | 1.000 | 0.997 | 1.000 | **0.086** | **0.086** | 0.129 |
+| **krea2-turbo** | 0.911 | 0.822 | 0.782 | 0.726 | 0.799 | 0.871 |
+| **qwen-image-2512** | 0.855 | 0.744 | 0.619 | 0.660 | 0.871 | 0.777 |
+| **z-image-turbo** | 0.901 | 0.779 | 0.749 | 0.581 | 0.665 | 0.845 |
+
+Across the 30 cross-generator cells, AUROC ranges 0.715–1.000 (median 0.954)
+while TPR@5%FPR ranges **0.086–1.000 (median 0.763)**.
+
+**The worst cells are far worse than they looked.** sdxl-turbo → krea2-turbo
+reads as AUROC 0.723 — mediocre but functional. In operating terms it catches
+**8.6 % of fakes** at a 5 % false-positive rate: roughly 1 in 12. At 1 % FPR the
+same cell catches **3.3 %**. An AUROC of 0.72 and a catch rate of 1-in-12 are
+the same number described two ways, and only one of them tells you whether to
+deploy it.
+
+This is the concrete case for the Method note below: **report TPR@k%FPR, not
+AUROC or accuracy.**
+
+### Leave-one-generator-out, both sides
+
+`logo.csv` now carries in-distribution as well as held-out metrics, so the
+seen→unseen drop is visible directly:
+
+| held out | TPR@5%FPR seen | TPR@5%FPR unseen | drop |
+|---|---|---|---|
+| krea2-turbo | 0.919 | **0.683** | −0.237 |
+| qwen-image-2512 | 0.899 | **0.732** | −0.167 |
+| z-image-turbo | 0.903 | 0.822 | −0.080 |
+| sdxl-turbo | 0.885 | 0.962 | +0.077 |
+| pixeldit | 0.880 | 0.982 | +0.102 |
+| dreamshaper-8 | 0.872 | 1.000 | +0.128 |
+
 ### Leave-one-generator-out
 
 Train on reals + five generators, test on the held-out sixth:

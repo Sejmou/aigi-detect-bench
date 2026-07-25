@@ -166,6 +166,90 @@ def _(mo):
 
 
 @app.cell
+def _(mo):
+    mo.md("""
+    ### The same six probes, measured at an operating point
+
+    AUROC is a ranking summary and hides the catch rate at a usable threshold.
+    Switch the metric below — the cluster structure stays, but the magnitudes
+    change enormously.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    metric_pick = mo.ui.radio(
+        options={
+            "AUROC": "auroc",
+            "TPR @ 5% FPR": "tpr@0.05fpr",
+            "TPR @ 1% FPR": "tpr@0.01fpr",
+        },
+        value="TPR @ 5% FPR",
+        label="metric",
+        inline=True,
+    )
+    metric_pick
+    return (metric_pick,)
+
+
+@app.cell
+def _(OUT, alt, metric_pick, mo, pl):
+    mat_metrics = pl.read_csv(OUT / "cross_generator_metrics.csv")
+
+
+    def _metric_heatmap():
+        _m = metric_pick.value
+        _d = mat_metrics.select("train_on", "tested_on", pl.col(_m).alias("value"))
+        _heat = alt.Chart(_d).mark_rect().encode(
+            x=alt.X("tested_on:N", title="tested on", axis=alt.Axis(labelAngle=-40)),
+            y=alt.Y("train_on:N", title="trained on"),
+            color=alt.Color(
+                "value:Q",
+                scale=alt.Scale(scheme="magma", domain=[0.0, 1.0]),
+                title=_m,
+            ),
+            tooltip=["train_on", "tested_on", alt.Tooltip("value:Q", format=".3f")],
+        )
+        _text = alt.Chart(_d).mark_text(fontSize=11).encode(
+            x="tested_on:N",
+            y="train_on:N",
+            text=alt.Text("value:Q", format=".2f"),
+            color=alt.condition(alt.datum.value < 0.55, alt.value("white"), alt.value("black")),
+        )
+        return mo.ui.altair_chart(
+            (_heat + _text).properties(width=420, height=320, title=f"Cross-generator {_m}")
+        )
+
+
+    _metric_heatmap()
+    return (mat_metrics,)
+
+
+@app.cell
+def _(mat_metrics, mo, pl):
+    _cross = mat_metrics.filter(~pl.col("same_generator"))
+    mo.md(
+        f"""
+        Across the 30 cross-generator cells:
+
+        | metric | min | median | max |
+        |---|---|---|---|
+        | AUROC | {_cross["auroc"].min():.3f} | {_cross["auroc"].median():.3f} | {_cross["auroc"].max():.3f} |
+        | TPR @ 5% FPR | **{_cross["tpr@0.05fpr"].min():.3f}** | {_cross["tpr@0.05fpr"].median():.3f} | {_cross["tpr@0.05fpr"].max():.3f} |
+        | TPR @ 1% FPR | **{_cross["tpr@0.01fpr"].min():.3f}** | {_cross["tpr@0.01fpr"].median():.3f} | {_cross["tpr@0.01fpr"].max():.3f} |
+
+        **sdxl-turbo → krea2-turbo** reads as AUROC 0.723 — mediocre but functional.
+        At a 5 % false-positive rate it catches **8.6 % of fakes**, about 1 in 12; at
+        1 % FPR, 3.3 %. Same detector, same cell, two very different impressions.
+
+        This is the concrete case for reporting TPR@k%FPR rather than AUROC.
+        """
+    )
+    return
+
+
+@app.cell
 def _(OUT, alt, mo, pl):
     logo = pl.read_csv(OUT / "logo.csv").sort("auroc_heldout")
 

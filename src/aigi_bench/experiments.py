@@ -152,10 +152,14 @@ def run_logo(
             {
                 "held_out": held,
                 "n_train": int(tr.sum()),
+                "n_test_heldout_fake": int((m_out & (y_all == 1)).sum()),
                 "auroc_heldout": out["auroc"],
                 "auroc_indist": ind["auroc"],
                 "gap": ind["auroc"] - out["auroc"],
+                # Both sides of every metric, not just AUROC: the seen-vs-unseen
+                # TPR gap at a fixed FPR is the number an operator feels.
                 **{f"heldout_{k}": v for k, v in out.items() if k != "auroc"},
+                **{f"indist_{k}": v for k, v in ind.items() if k != "auroc"},
             }
         )
     return pl.DataFrame(rows)
@@ -166,12 +170,20 @@ def run_matrix(
     cache_dir: str | Path,
     condition: str = "clean",
     paired_core_only: bool = True,
-) -> pl.DataFrame:
-    """Train on one generator, test on each. Rows = train, columns = test.
+    fprs: list[float] | None = None,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Train on one generator, test on each. Returns (wide_auroc, long_metrics).
 
     Restricted to the paired core by default so every cell is scored on the
     same 2000 source covers — a difference between cells is then a generator
     difference, never a content difference.
+
+    Two shapes come back because they answer different questions. The wide frame
+    is one AUROC per cell, which is what a heatmap wants. The long frame keeps
+    *every* metric per cell — TPR at each target FPR especially, since AUROC is
+    a ranking summary and says nothing about the catch rate at a usable
+    operating point. A cell can hold AUROC 0.95 while catching two thirds of
+    fakes, and only the long frame shows that.
     """
     c = load_corpus(manifest_path, cache_dir, condition)
     y_all = c.df["label"].to_numpy()
@@ -181,16 +193,26 @@ def run_matrix(
     is_test = c.mask(pl.col("split") == "test")
     core = c.mask(pl.col("is_paired_core")) if paired_core_only else np.ones_like(is_test)
 
-    rows = []
+    wide, long = [], []
     for g_tr in gens:
         m_tr = is_train & (is_real | c.mask(pl.col("generator") == g_tr))
         probe = fit_probe(c.feats[m_tr], y_all[m_tr])
         row = {"train_on": g_tr, "n_train": int(m_tr.sum())}
         for g_te in gens:
             m_te = is_test & core & (is_real | c.mask(pl.col("generator") == g_te))
-            row[g_te] = summarize(y_all[m_te], _scores(probe, c.feats[m_te]))["auroc"]
-        rows.append(row)
-    return pl.DataFrame(rows)
+            metrics = summarize(y_all[m_te], _scores(probe, c.feats[m_te]), fprs)
+            row[g_te] = metrics["auroc"]
+            long.append({
+                "train_on": g_tr,
+                "tested_on": g_te,
+                "same_generator": g_tr == g_te,
+                "n_train": int(m_tr.sum()),
+                "n_test": int(m_te.sum()),
+                "n_test_fake": int((m_te & ~is_real).sum()),
+                **metrics,
+            })
+        wide.append(row)
+    return pl.DataFrame(wide), pl.DataFrame(long)
 
 
 def run_ensemble(
@@ -349,14 +371,21 @@ def run_all(
 
     rob = run_robustness(manifest_path, cache_dir, fprs)
     logo = run_logo(manifest_path, cache_dir, fprs=fprs)
-    mat = run_matrix(manifest_path, cache_dir)
+    mat, mat_long = run_matrix(manifest_path, cache_dir, fprs=fprs)
+    mat_long.write_csv(out_dir / "cross_generator_metrics.csv")
 
     avail = available_conditions(cache_dir)
     cal_conds = [c for c in ("clean", "jpeg_40", "blur_2", "social_55") if c in avail]
     cal = run_calibration(manifest_path, cache_dir, fprs, cal_conds)
     cal.write_csv(out_dir / "calibration.csv")
 
-    out = {"robustness": rob, "logo": logo, "matrix": mat, "calibration": cal}
+    out = {
+        "robustness": rob,
+        "logo": logo,
+        "matrix": mat,
+        "matrix_metrics": mat_long,
+        "calibration": cal,
+    }
     if score_cache_dir and Path(score_cache_dir).exists():
         ens = run_ensemble(manifest_path, cache_dir, score_cache_dir, fprs=fprs)
         ens.write_csv(out_dir / "ensemble.csv")
