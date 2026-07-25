@@ -250,6 +250,254 @@ def _(mat_metrics, mo, pl):
 
 
 @app.cell
+def _(mo):
+    mo.md("""
+    ### The ROC curve behind those numbers
+
+    AUROC is the **area** under this curve; TPR@5%FPR is a single **point** on
+    it. When the two disagree, the curve's shape is why — and the shape is only
+    legible on a log x-axis, because half of a linear ROC plot is spent on
+    FPR > 0.5, operating points nobody would ever choose.
+
+    Pick the generator the probe was trained on; each line is a generator it was
+    tested against. Dashed verticals mark the 1 % and 5 % FPR budgets.
+    """)
+    return
+
+
+@app.cell
+def _(mat_metrics, mo):
+    roc_train_pick = mo.ui.dropdown(
+        options=sorted(mat_metrics["train_on"].unique().to_list()),
+        value="sdxl-turbo",
+        label="probe trained on",
+    )
+    roc_train_pick
+    return (roc_train_pick,)
+
+
+@app.cell
+def _(OUT, alt, mo, pl, roc_train_pick):
+    roc = pl.read_parquet(OUT / "roc_curves.parquet")
+
+
+    def _roc_plot():
+        _d = roc.filter(pl.col("train_on") == roc_train_pick.value)
+        _curves = alt.Chart(_d).mark_line(interpolate="step-after").encode(
+            x=alt.X(
+                "fpr:Q",
+                title="false positive rate (log scale)",
+                scale=alt.Scale(type="log", domain=[1e-4, 1.0]),
+            ),
+            y=alt.Y("tpr:Q", title="true positive rate", scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color("tested_on:N", title="tested on"),
+            strokeDash=alt.condition(
+                alt.datum.tested_on == roc_train_pick.value,
+                alt.value([1, 0]),
+                alt.value([4, 2]),
+            ),
+            tooltip=[
+                "tested_on",
+                alt.Tooltip("fpr:Q", format=".4f"),
+                alt.Tooltip("tpr:Q", format=".3f"),
+            ],
+        )
+        _budgets = alt.Chart(pl.DataFrame({"fpr": [0.01, 0.05]})).mark_rule(
+            color="grey", strokeDash=[3, 3]
+        ).encode(x="fpr:Q")
+        return mo.ui.altair_chart(
+            (_curves + _budgets).properties(
+                width=520,
+                height=340,
+                title=f"ROC — probe trained on {roc_train_pick.value} (solid = same generator)",
+            )
+        )
+
+
+    _roc_plot()
+    return
+
+
+@app.cell
+def _(mat_metrics, mo, pl, roc_train_pick):
+    def _roc_reading():
+        _t = mat_metrics.filter(pl.col("train_on") == roc_train_pick.value).select(
+            pl.col("tested_on").alias("tested on"),
+            pl.col("auroc").round(3).alias("AUROC"),
+            pl.col("tpr@0.05fpr").round(3).alias("TPR@5%FPR"),
+            pl.col("tpr@0.01fpr").round(3).alias("TPR@1%FPR"),
+        ).sort("TPR@5%FPR")
+        return mo.vstack([
+            mo.ui.table(_t, selection=None, pagination=False),
+            mo.md(
+                """
+                **What to look for.** Select `sdxl-turbo` and compare two curves.
+
+                | FPR budget | → krea2-turbo | → pixeldit |
+                |---|---|---|
+                | 0.1 % | 0.008 | 0.429 |
+                | 1 % | 0.033 | 0.929 |
+                | 5 % | 0.086 | 0.997 |
+                | 10 % | 0.320 | — |
+                | 50 % | 0.868 | — |
+
+                Same probe, same test protocol. Against **pixeldit** the curve leaps
+                almost to the ceiling before FPR reaches 1 % — the shape you want.
+                Against **krea2-turbo** it crawls along the bottom through the entire
+                usable region and only climbs once you are willing to misflag one
+                real cover in ten.
+
+                That late climb is what lifts the *area* to 0.72 while every
+                threshold you would actually deploy sits near 0.09. A curve can have
+                a respectable AUROC and be useless at every operating point you would
+                consider — which is the argument for quoting TPR at a fixed FPR, or
+                for showing the curve, which contains both.
+                """
+            ),
+        ])
+
+
+    _roc_reading()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Precision-recall, same probes
+
+    Precision answers the question a reviewer actually asks: *of the images this
+    flagged, how many are really fake?* Recall is the same axis as TPR, so a
+    point on the ROC plot above can be located here.
+
+    **Read the baseline carefully.** On the paired core these test sets are
+    balanced (prevalence ≈ 0.50), so the chance line sits at 0.5 — high. These
+    curves are *not* showing the rare-positive regime; the next section is.
+    """)
+    return
+
+
+@app.cell
+def _(OUT, alt, mo, pl, roc_train_pick):
+    pr = pl.read_parquet(OUT / "pr_curves.parquet")
+
+
+    def _pr_plot():
+        _d = pr.filter(pl.col("train_on") == roc_train_pick.value)
+        _base = float(_d["prevalence"][0])
+        _curves = alt.Chart(_d).mark_line(interpolate="step-after").encode(
+            x=alt.X("recall:Q", title="recall  (= TPR)", scale=alt.Scale(domain=[0, 1])),
+            y=alt.Y("precision:Q", title="precision", scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color("tested_on:N", title="tested on"),
+            strokeDash=alt.condition(
+                alt.datum.tested_on == roc_train_pick.value,
+                alt.value([1, 0]),
+                alt.value([4, 2]),
+            ),
+            tooltip=[
+                "tested_on",
+                alt.Tooltip("recall:Q", format=".3f"),
+                alt.Tooltip("precision:Q", format=".3f"),
+            ],
+        )
+        _chance = alt.Chart(pl.DataFrame({"p": [_base]})).mark_rule(
+            color="grey", strokeDash=[3, 3]
+        ).encode(y="p:Q")
+        return mo.ui.altair_chart(
+            (_curves + _chance).properties(
+                width=520,
+                height=340,
+                title=(
+                    f"Precision-recall — trained on {roc_train_pick.value} "
+                    f"(chance = {_base:.2f})"
+                ),
+            )
+        )
+
+
+    _pr_plot()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## 6. The number that decides deployability
+
+    Every evaluation above is 50/50 real-to-fake, which is convenient for
+    measurement and unlike any real image feed. If only a small share of incoming
+    images are generated, a fixed false-positive rate gets applied to a far
+    larger pool of reals — so false alarms swamp true hits and **precision
+    collapses while AUROC, TPR and FPR are all unchanged**.
+
+    Nothing is refitted below. It is the same measured TPR/FPR pairs re-read at a
+    different base rate, via
+    `precision = TPR·p / (TPR·p + FPR·(1−p))`.
+    """)
+    return
+
+
+@app.cell
+def _(OUT, alt, mo, pl):
+    prev = pl.read_csv(OUT / "precision_at_prevalence.csv")
+
+    _summary = pl.concat([
+        prev.filter(pl.col("same_generator")).group_by("assumed_prevalence").agg(
+            pl.col("precision").mean().alias("precision")
+        ).with_columns(pl.lit("same generator (best case)").alias("case")),
+        prev.filter(~pl.col("same_generator")).group_by("assumed_prevalence").agg(
+            pl.col("precision").median().alias("precision")
+        ).with_columns(pl.lit("cross-generator (median)").alias("case")),
+        prev.filter(~pl.col("same_generator")).group_by("assumed_prevalence").agg(
+            pl.col("precision").min().alias("precision")
+        ).with_columns(pl.lit("cross-generator (worst)").alias("case")),
+    ])
+
+    prev_chart = alt.Chart(_summary).mark_line(point=alt.OverlayMarkDef(size=80)).encode(
+        x=alt.X(
+            "assumed_prevalence:Q",
+            title="share of incoming images that are AI-generated",
+            scale=alt.Scale(type="log", domain=[0.001, 0.5], reverse=True),
+        ),
+        y=alt.Y("precision:Q", title="precision at a 5% FPR threshold",
+                scale=alt.Scale(domain=[0, 1])),
+        color=alt.Color("case:N", title=None),
+        tooltip=["case", alt.Tooltip("assumed_prevalence:Q", format=".3f"),
+                 alt.Tooltip("precision:Q", format=".3f")],
+    ).properties(width=520, height=300, title="Precision collapses as generated images get rarer")
+    mo.ui.altair_chart(prev_chart)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    | AI share of feed | best case (same generator) | cross-generator median | cross-generator worst |
+    |---|---|---|---|
+    | 50 % | 0.947 | 0.938 | 0.633 |
+    | 10 % | 0.666 | 0.629 | 0.161 |
+    | **1 %** | **0.155** | **0.134** | **0.017** |
+    | 0.1 % | 0.018 | 0.015 | 0.002 |
+
+    **At a 1 % base rate, the best-case detector is wrong about 85 % of the time
+    it raises a flag** — and that is the configuration where it has training data
+    for the exact generator. In the worst cross-generator cell, 98 % of flags are
+    false.
+
+    None of this contradicts the earlier numbers; AUROC is still 0.98 and TPR is
+    still 0.89. Base rate is doing all the work. It is why the standing advice is
+    that a detector output is a **triage signal** for routing to review, not a
+    verdict — and why provenance (C2PA) matters, since it does not degrade with
+    prevalence.
+
+    To move these numbers you must cut FPR, not raise TPR. Going from 5 % to
+    0.1 % FPR buys back roughly a factor of 50 in precision, at the cost of the
+    recall shown in the ROC plot above.
+    """)
+    return
+
+
+@app.cell
 def _(OUT, alt, mo, pl):
     heldout = pl.read_csv(OUT / "leave_one_generator_out.csv").sort("auroc_heldout")
 

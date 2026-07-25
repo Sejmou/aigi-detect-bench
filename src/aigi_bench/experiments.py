@@ -264,6 +264,174 @@ def run_ensemble(
     return pl.DataFrame(rows).with_columns(pl.lit(rho).alias("spearman_clip_npr"))
 
 
+def run_roc_curves(
+    manifest_path: str | Path,
+    cache_dir: str | Path,
+    condition: str = "clean",
+    paired_core_only: bool = True,
+    n_grid: int = 120,
+) -> pl.DataFrame:
+    """ROC curve per (train_on, tested_on) cell, on a shared log-spaced FPR grid.
+
+    Why a grid rather than raw ROC vertices: each cell's curve has as many
+    vertices as there are distinct scores (thousands), the vertices fall at
+    different FPRs per cell so curves cannot be compared row-wise, and the
+    resulting frame would be tens of MB. Interpolating onto one grid makes the
+    curves directly comparable and the output small enough to ship.
+
+    The grid is **log-spaced from 1e-4**, because that is where the decision
+    lives. Half the linear x-axis of an ROC plot covers FPR > 0.5 — operating
+    points nobody would ever choose. Spacing by decade instead gives the
+    low-FPR region the room it deserves; this is the DET-style convention from
+    the detection and biometrics literature.
+
+    Returns long-form: train_on, tested_on, fpr, tpr.
+    """
+    from sklearn.metrics import roc_curve
+
+    c = load_corpus(manifest_path, cache_dir, condition)
+    y_all = c.df["label"].to_numpy()
+    gens = sorted(c.df["generator"].drop_nulls().unique().to_list())
+    is_real = y_all == 0
+    is_train = c.mask(pl.col("split") == "train")
+    is_test = c.mask(pl.col("split") == "test")
+    core = c.mask(pl.col("is_paired_core")) if paired_core_only else np.ones_like(is_test)
+
+    # Include the two reporting points exactly so the curve and the table agree.
+    grid = np.unique(
+        np.concatenate([np.logspace(-4, 0, n_grid), np.array([0.01, 0.05])])
+    )
+
+    rows = []
+    for g_tr in gens:
+        m_tr = is_train & (is_real | c.mask(pl.col("generator") == g_tr))
+        probe = fit_probe(c.feats[m_tr], y_all[m_tr])
+        for g_te in gens:
+            m_te = is_test & core & (is_real | c.mask(pl.col("generator") == g_te))
+            fpr, tpr, _ = roc_curve(y_all[m_te], _scores(probe, c.feats[m_te]))
+            # Step interpolation: at a given FPR budget the achievable TPR is the
+            # curve's value at the last vertex at or below it, which is what
+            # tpr_at_fpr reports. Linear interpolation would overstate it.
+            idx = np.searchsorted(fpr, grid, side="right") - 1
+            rows.append(
+                pl.DataFrame({
+                    "train_on": g_tr,
+                    "tested_on": g_te,
+                    "fpr": grid,
+                    "tpr": tpr[np.clip(idx, 0, len(tpr) - 1)],
+                })
+            )
+    return pl.concat(rows, how="vertical")
+
+
+def run_pr_curves(
+    manifest_path: str | Path,
+    cache_dir: str | Path,
+    condition: str = "clean",
+    paired_core_only: bool = True,
+    n_grid: int = 120,
+) -> pl.DataFrame:
+    """Precision-recall curve per cell, on a shared recall grid.
+
+    Complements run_roc_curves rather than duplicating it: precision is what an
+    operator experiences — of the images flagged, how many are actually fake.
+
+    Measured caveat, and it matters for how these curves read: on the paired
+    core the cells are **balanced**, prevalence ≈ 0.501, because every cover in
+    the core has exactly one reconstruction per generator. So the PR chance
+    baseline here is 0.5, not the low value an imbalanced set would give, and
+    average precision tracks AUROC fairly closely. These curves are *not*
+    showing the rare-positive regime.
+
+    That regime is the operationally important one, and it is recoverable
+    without new data: precision at any assumed prevalence p follows from the
+    same TPR/FPR pair,
+
+        precision = TPR·p / (TPR·p + FPR·(1-p))
+
+    which is what `precision_at_prevalence` below computes. `prevalence` is
+    returned per cell so the curve is always readable against its own baseline.
+
+    Recall is the x-grid because it is the axis shared with TPR — recall *is*
+    TPR — so a point read off the ROC plot can be located on this one.
+    """
+    from sklearn.metrics import precision_recall_curve
+
+    c = load_corpus(manifest_path, cache_dir, condition)
+    y_all = c.df["label"].to_numpy()
+    gens = sorted(c.df["generator"].drop_nulls().unique().to_list())
+    is_real = y_all == 0
+    is_train = c.mask(pl.col("split") == "train")
+    is_test = c.mask(pl.col("split") == "test")
+    core = c.mask(pl.col("is_paired_core")) if paired_core_only else np.ones_like(is_test)
+
+    grid = np.linspace(0.0, 1.0, n_grid)
+
+    rows = []
+    for g_tr in gens:
+        m_tr = is_train & (is_real | c.mask(pl.col("generator") == g_tr))
+        probe = fit_probe(c.feats[m_tr], y_all[m_tr])
+        for g_te in gens:
+            m_te = is_test & core & (is_real | c.mask(pl.col("generator") == g_te))
+            y, s = y_all[m_te], _scores(probe, c.feats[m_te])
+            prec, rec, _ = precision_recall_curve(y, s)
+            # precision_recall_curve returns recall descending; flip for interp.
+            order = np.argsort(rec)
+            # Best achievable precision at or above each recall level: the curve
+            # is not monotone, so a plain interpolation would understate it.
+            interp = np.maximum.accumulate(prec[order][::-1])[::-1]
+            idx = np.searchsorted(rec[order], grid, side="left")
+            rows.append(
+                pl.DataFrame({
+                    "train_on": g_tr,
+                    "tested_on": g_te,
+                    "recall": grid,
+                    "precision": interp[np.clip(idx, 0, len(interp) - 1)],
+                    "prevalence": float(np.mean(y)),
+                })
+            )
+    return pl.concat(rows, how="vertical")
+
+
+def precision_at_prevalence(
+    metrics: pl.DataFrame,
+    prevalences: list[float] | None = None,
+    fpr_col: str = "tpr@0.05fpr",
+    fpr_value: float = 0.05,
+) -> pl.DataFrame:
+    """Precision each cell would achieve if fakes were rarer than in the test set.
+
+    The evaluation sets here are 50/50 by construction, which is convenient for
+    measurement and unlike any deployment. If only a small fraction of incoming
+    images are generated, a fixed false-positive rate is applied to a much larger
+    pool of reals, so false alarms swamp true hits and precision collapses even
+    though TPR and FPR — and therefore AUROC — are unchanged.
+
+    Bayes, with the operating point fixed:
+
+        precision = TPR·p / (TPR·p + FPR·(1-p))
+
+    Nothing is re-fitted; this is a re-reading of the same measured numbers at a
+    different base rate.
+    """
+    prevalences = prevalences or [0.5, 0.1, 0.01, 0.001]
+    rows = []
+    for p in prevalences:
+        for r in metrics.to_dicts():
+            tpr = r[fpr_col]
+            prec = (tpr * p) / (tpr * p + fpr_value * (1 - p)) if tpr > 0 else 0.0
+            rows.append({
+                "train_on": r["train_on"],
+                "tested_on": r["tested_on"],
+                "same_generator": r["same_generator"],
+                "assumed_prevalence": p,
+                "tpr": tpr,
+                "fpr": fpr_value,
+                "precision": prec,
+            })
+    return pl.DataFrame(rows)
+
+
 def plot_matrix(matrix: pl.DataFrame, path: str | Path, title: str) -> None:
     import matplotlib
 
@@ -374,6 +542,12 @@ def run_all(
     heldout = run_leave_one_generator_out(manifest_path, cache_dir, fprs=fprs)
     mat, mat_long = run_matrix(manifest_path, cache_dir, fprs=fprs)
     mat_long.write_csv(out_dir / "cross_generator_metrics.csv")
+    roc = run_roc_curves(manifest_path, cache_dir)
+    roc.write_parquet(out_dir / "roc_curves.parquet")
+    prc = run_pr_curves(manifest_path, cache_dir)
+    prc.write_parquet(out_dir / "pr_curves.parquet")
+    prev = precision_at_prevalence(mat_long)
+    prev.write_csv(out_dir / "precision_at_prevalence.csv")
 
     avail = available_conditions(cache_dir)
     cal_conds = [c for c in ("clean", "jpeg_40", "blur_2", "social_55") if c in avail]
@@ -385,6 +559,9 @@ def run_all(
         "leave_one_generator_out": heldout,
         "matrix": mat,
         "matrix_metrics": mat_long,
+        "roc_curves": roc,
+        "pr_curves": prc,
+        "precision_at_prevalence": prev,
         "calibration": cal,
     }
     if score_cache_dir and Path(score_cache_dir).exists():

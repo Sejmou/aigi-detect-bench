@@ -288,6 +288,33 @@ deploy it.
 This is the concrete case for the Method note below: **report TPR@k%FPR, not
 AUROC or accuracy.**
 
+### Precision at a realistic base rate — the deployability number
+
+Every evaluation here is 50/50 real-to-fake, which is convenient for measurement
+and unlike any real image feed. Re-reading the *same* measured TPR/FPR pairs at a
+lower base rate (`precision = TPR·p / (TPR·p + FPR·(1−p))`, nothing refitted),
+at the 5 % FPR operating point:
+
+| AI share of feed | best case (same generator) | cross-generator median | cross-generator worst |
+|---|---|---|---|
+| 50 % | 0.947 | 0.938 | 0.633 |
+| 10 % | 0.666 | 0.629 | 0.161 |
+| **1 %** | **0.155** | **0.134** | **0.017** |
+| 0.1 % | 0.018 | 0.015 | 0.002 |
+
+**At a 1 % base rate the best-case detector is wrong about 85 % of the times it
+raises a flag** — in the configuration where it has training data for the exact
+generator. In the worst cross-generator cell, 98 % of flags are false.
+
+Nothing here contradicts the numbers above: AUROC is still 0.98, TPR still 0.89,
+FPR still 5 %. Base rate is doing all the work. This is the quantitative form of
+the standing advice that detector output is a **triage signal** for routing to
+review, never a verdict, and it is why provenance (C2PA) is complementary rather
+than redundant — provenance does not degrade with prevalence.
+
+To move these numbers you must cut FPR, not raise TPR: 5 % → 0.1 % FPR buys back
+roughly 50× in precision, at the recall cost visible in `roc_curves.parquet`.
+
 ### Leave-one-generator-out, both sides
 
 `leave_one_generator_out.csv` carries in-distribution as well as held-out

@@ -2,13 +2,38 @@
 from __future__ import annotations
 
 import numpy as np
-from sklearn.metrics import balanced_accuracy_score, roc_auc_score, roc_curve
+from sklearn.metrics import (
+    average_precision_score,
+    balanced_accuracy_score,
+    roc_auc_score,
+    roc_curve,
+)
 
 
 def auroc(labels: np.ndarray, scores: np.ndarray) -> float:
     if len(set(labels.tolist())) < 2:
         return float("nan")
     return float(roc_auc_score(labels, scores))
+
+
+def average_precision(labels: np.ndarray, scores: np.ndarray) -> float:
+    """Area under the precision-recall curve.
+
+    Reported alongside AUROC because the two answer different questions. AUROC
+    is invariant to class balance; average precision is not, and precision is
+    what an operator actually experiences — of the images this flags, how many
+    are really fake. On an imbalanced test set AP falls while AUROC does not,
+    which is exactly the discrepancy worth seeing.
+    """
+    if len(set(labels.tolist())) < 2:
+        return float("nan")
+    return float(average_precision_score(labels, scores))
+
+
+def prevalence(labels: np.ndarray) -> float:
+    """Positive rate — the precision a coin flip would achieve, i.e. the PR
+    curve's chance baseline (unlike ROC's, it is not 0.5)."""
+    return float(np.mean(labels))
 
 
 def tpr_at_fpr(labels: np.ndarray, scores: np.ndarray, target_fpr: float) -> float:
@@ -53,6 +78,8 @@ def summarize(
     fprs = fprs or [0.01, 0.05]
     out = {
         "auroc": auroc(labels, scores),
+        "average_precision": average_precision(labels, scores),
+        "prevalence": prevalence(labels),
         "balanced_acc@0.5": balanced_accuracy(labels, scores, 0.5),
     }
     for f in fprs:
