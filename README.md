@@ -94,6 +94,24 @@ uv run aigi-bench experiments # robustness, LOGO, 6x6 matrix, calibration, ensem
 uv run aigi-bench attack      # tier-4 white-box PGD
 ```
 
+### Interactive notebook
+
+`demo/results.py` is a marimo notebook covering all five findings, including a
+panel that shows a real cover, its reconstruction, the attacked version and the
+amplified difference side by side — so you can confirm by eye that the
+perturbation which destroys the detector is genuinely invisible.
+
+```bash
+uv run marimo run demo/results.py \
+    --host "$(tailscale ip -4)" --port 2722 --no-token --headless --watch
+```
+
+Bind to the current host's Tailscale IP rather than a hardcoded address, so this
+survives a machine switch. Ports 2718–2721 are usually taken (2720/2721 by the
+sibling img-captioning notebooks). Use `marimo edit` instead of `run` to modify
+cells. It reads only the CSVs in `outputs/` plus the saved adversarial PNGs, so
+it opens instantly and needs no GPU.
+
 ## What the corpus is
 
 10,000 real covers (all released pre-2014, before GANs, so "guaranteed real")
