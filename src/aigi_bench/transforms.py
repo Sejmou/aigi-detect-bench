@@ -69,15 +69,26 @@ def center_crop(area_frac: float) -> Transform:
 
 # --- Tier 2: laundering ------------------------------------------------------
 # Tier 1 above is single-operation and matches the published robustness
-# protocols. Tier 2 models what actually happens to an image between a
-# generator and the place a detector sees it: it has been through a chat app, a
-# screenshot, a re-upload, a CDN transcode. These are *compositions*, and they
-# are harsher than any single tier-1 operation at comparable "visual damage",
-# which is the point — a detector that survives jpeg_40 may still die here.
+# protocols. Tier 2 models what actually happens to an image between a generator
+# and the place a detector sees it: a chat app, a screenshot, a re-upload, a CDN
+# transcode. These are *compositions* rather than single operations.
 #
 # None of these are adversarial: no detector is consulted while building them.
 # They are the benign-but-realistic middle ground between tier 1 and the
 # white-box attack in attacks.py.
+#
+# MEASURED, on the album-cover corpus with the CLIP ViT-L/14 probe: tier 2 is
+# NOT harsher than tier 1. Worst tier-2 condition is webp QF60 at -0.0122 AUROC;
+# worst tier-1 is blur sigma=2 at -0.0147. Five successive JPEG generations cost
+# 0.0073, and noise+median-filter — which targets pixel residuals directly —
+# costs 0.0083.
+#
+# That is a statement about *semantic* detectors, not about these transforms.
+# CLIP reads content and composition, which survive every codec here; a
+# residual-based detector like NPR reads exactly what these operations destroy,
+# so the same suite should be expected to hurt it far more. Keep the tier-2
+# conditions in the sweep for that reason — they discriminate between detector
+# families even when they barely move this one.
 
 
 def webp_roundtrip(quality: int) -> Transform:

@@ -71,8 +71,9 @@ Five results, in rough order of how much they should change what you do:
    raw corpus and 0.427 after normalization. Any benchmark whose classes differ
    in container format or resolution is measuring the container.
 2. **Cross-generator drift is the real failure mode, not image processing.**
-   Benign transforms cost at most 0.015 AUROC; holding out an unseen generator
-   costs up to 0.045 and drops TPR@5%FPR from 0.89 to 0.68.
+   Across 28 benign conditions — including 5× JPEG chains and noise+denoise —
+   the probe never loses more than 0.015 AUROC. Holding out an unseen generator
+   costs 0.045 and drops TPR@5%FPR from 0.89 to 0.68.
 3. **Generalization is asymmetric — train on your hardest generator.** Probes
    trained on the easy cluster transfer at 0.72–0.82; probes trained on the hard
    cluster transfer at 0.91–0.98.
@@ -289,11 +290,45 @@ detector and it is the mirror image of NPR's collapse: CLIP reads content and
 composition, which JPEG and blur leave intact, while NPR reads a pixel residual
 that the same operations destroy.
 
+### Tier 2 — laundering (28 conditions total)
+
+Tier 2 composes operations the way a real distribution path does: WebP
+round-trips, multi-generation JPEG chains, screenshot simulation, a
+social-media pipeline (resize + unsharp + JPEG), and noise-then-median-filter.
+
+| tier | worst condition | Δ AUROC | TPR@5%FPR |
+|---|---|---|---|
+| tier 1 | blur σ=2.0 | **−0.0147** | 0.832 |
+| tier 2 | webp QF 60 | **−0.0122** | 0.835 |
+
+Selected tier-2 rows:
+
+| condition | AUROC | Δ vs clean |
+|---|---|---|
+| webp QF 60 | 0.9649 | −0.0122 |
+| noise+denoise σ=8 | 0.9689 | −0.0083 |
+| recompress ×5 | 0.9698 | −0.0073 |
+| social QF 55 | 0.9703 | −0.0068 |
+| screenshot 1.0× | 0.9756 | −0.0015 |
+
+**We expected tier 2 to be harsher than tier 1. It is not.** Five successive
+JPEG generations cost 0.0073 AUROC; noise-then-median-filter, which targets
+pixel residuals directly, costs 0.0083. Both are milder than a single σ=2 blur.
+
+The explanation is the same mechanism as everywhere else in this document: these
+compositions destroy *low-level* structure, and the CLIP probe does not use
+low-level structure. The result is therefore a statement about semantic
+detectors, not about the transforms — the identical suite should be expected to
+devastate a residual-based detector like NPR. The tier-2 conditions stay in the
+sweep for exactly that reason: they discriminate between detector families even
+when they barely move this one.
+
 The practical consequence is that **cross-generator drift, not image processing,
-is this detector's failure mode.** Compare the numbers: benign processing costs
-at most 0.015 AUROC, while holding out krea2-turbo costs 0.045 and drops
-TPR@5%FPR from 0.889 to 0.683. Robustness effort spent on JPEG augmentation
-would be misdirected here.
+is this detector's failure mode.** Across all 28 perturbation conditions the
+probe never loses more than 0.015 AUROC, while holding out krea2-turbo costs
+0.045 and drops TPR@5%FPR from 0.889 to 0.683. Robustness effort spent on
+compression augmentation would be misdirected here; effort spent on generator
+coverage would not.
 
 ## Calibration and operating points
 
