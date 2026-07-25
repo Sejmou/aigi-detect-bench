@@ -152,12 +152,15 @@ def cmd_attack(cfg: dict) -> None:
     base = clean_scores(model, w, b, paths)
     rows = [{"condition": "clean", "epsilon_255": 0.0, **summarize(y, base)}]
     fake_paths = [p for p, lab in zip(paths, y, strict=True) if lab == 1]
+    save_root = a.get("save_dir")
     for eps255 in a.get("epsilons_255", [1, 2, 4, 8]):
         eps = eps255 / 255
         adv = pgd_scores(
             model, w, b, fake_paths, epsilon=eps,
             alpha=max(eps / 4, 0.5 / 255), steps=a.get("steps", 10),
             batch_size=a.get("batch_size", 24),
+            save_dir=(Path(save_root) / f"eps{eps255}") if save_root else None,
+            seed=cfg["data"].get("seed", 42),
         )
         s = base.copy()
         s[y == 1] = adv

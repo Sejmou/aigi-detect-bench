@@ -35,6 +35,10 @@ attack:
   epsilons_255: [1, 2, 4, 8]
   steps: 10
   batch_size: 24
+  # Keep the attacked images: they are the reusable artifact — testing another
+  # detector against the same attack needs them, and so does confirming by eye
+  # that the perturbation is actually invisible. PNG, never JPEG.
+  save_dir: /data/out/aigi-detect/adversarial
 
 # Paths
 data:
