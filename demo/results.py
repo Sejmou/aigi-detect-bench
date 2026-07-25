@@ -251,17 +251,21 @@ def _(mat_metrics, mo, pl):
 
 @app.cell
 def _(OUT, alt, mo, pl):
-    logo = pl.read_csv(OUT / "logo.csv").sort("auroc_heldout")
+    heldout = pl.read_csv(OUT / "leave_one_generator_out.csv").sort("auroc_heldout")
 
-    logo_chart = alt.Chart(
-        logo.unpivot(
+    heldout_chart = alt.Chart(
+        heldout.unpivot(
             index="held_out",
             on=["auroc_heldout", "auroc_indist"],
             variable_name="split",
             value_name="auroc",
         )
     ).mark_point(size=110, filled=True, opacity=0.9).encode(
-        y=alt.Y("held_out:N", title="generator held out", sort=logo["held_out"].to_list()),
+        y=alt.Y(
+            "held_out:N",
+            title="generator held out",
+            sort=heldout["held_out"].to_list(),
+        ),
         x=alt.X("auroc:Q", title="AUROC", scale=alt.Scale(domain=[0.9, 1.0])),
         color=alt.Color(
             "split:N",
@@ -273,10 +277,10 @@ def _(OUT, alt, mo, pl):
         ),
         tooltip=["held_out", "split", alt.Tooltip("auroc:Q", format=".4f")],
     ).properties(
-        width=460, height=200, title="Leave-one-generator-out: seen vs unseen"
+        width=460, height=200, title="Train on five generators, test on the sixth"
     )
-    mo.ui.altair_chart(logo_chart)
-    return (logo,)
+    mo.ui.altair_chart(heldout_chart)
+    return (heldout,)
 
 
 @app.cell
@@ -290,13 +294,16 @@ def _(mo):
 
 
 @app.cell
-def _(logo, mo, pl):
+def _(heldout, mo, pl):
     mo.ui.table(
-        logo.select(
+        heldout.select(
             pl.col("held_out").alias("held out"),
             pl.col("auroc_heldout").round(4).alias("AUROC"),
-            pl.col("heldout_tpr@0.05fpr").round(4).alias("TPR @ 5% FPR"),
-            pl.col("heldout_tpr@0.01fpr").round(4).alias("TPR @ 1% FPR"),
+            pl.col("indist_tpr@0.05fpr").round(4).alias("TPR@5%FPR seen"),
+            pl.col("heldout_tpr@0.05fpr").round(4).alias("TPR@5%FPR unseen"),
+            (pl.col("indist_tpr@0.05fpr") - pl.col("heldout_tpr@0.05fpr"))
+            .round(4)
+            .alias("drop"),
         ),
         selection=None,
         pagination=False,

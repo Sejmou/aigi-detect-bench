@@ -90,7 +90,7 @@ uv run aigi-bench manifest    # join covers <-> reconstructions
 uv run aigi-bench normalize   # strip the format/resolution signal
 uv run aigi-bench features    # cache CLIP features per condition (GPU, ~1h)
 uv run aigi-bench npr-scores  # cache NPR scores
-uv run aigi-bench experiments # robustness, LOGO, 6x6 matrix, calibration, ensemble
+uv run aigi-bench experiments # robustness, held-out generator, 6x6 matrix, calibration, ensemble
 uv run aigi-bench attack      # tier-4 white-box PGD
 ```
 
@@ -290,7 +290,8 @@ AUROC or accuracy.**
 
 ### Leave-one-generator-out, both sides
 
-`logo.csv` now carries in-distribution as well as held-out metrics, so the
+`leave_one_generator_out.csv` carries in-distribution as well as held-out
+metrics, so the
 seen→unseen drop is visible directly:
 
 | held out | TPR@5%FPR seen | TPR@5%FPR unseen | drop |

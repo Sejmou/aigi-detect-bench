@@ -6,7 +6,8 @@ CLIP features. Only the feature extraction touches the GPU, and it is by far
 the dominant cost. Extracting once and reusing turns the rest into seconds of
 NumPy.
 
-Concretely: the LOGO experiment trains six probes and evaluates each under 16
+Concretely: the leave-one-generator-out experiment trains six probes and
+evaluates each under 16
 perturbation conditions. Done naively that is 6 x 16 GPU passes over the
 corpus. Because the probe is a logistic regression on frozen features, the
 features do not depend on which fold is being trained, so one pass over

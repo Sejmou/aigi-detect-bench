@@ -1,4 +1,4 @@
-"""Experiments over the cached CLIP features: robustness, LOGO, cross-generator.
+"""Experiments over cached CLIP features: robustness, held-out generator, matrix.
 
 All of these are logistic regressions on frozen features, so once features.py
 has run they cost seconds rather than GPU-hours. Three experiments:
@@ -7,9 +7,10 @@ has run they cost seconds rather than GPU-hours. Three experiments:
                   split under every perturbation condition. Answers "how much
                   does benign processing cost me?"
 
-  logo            leave-one-generator-out: train on reals + five generators,
-                  test on the held-out sixth. This is the deployment-realistic
-                  number — you never have training data for tomorrow's model.
+  leave-one-generator-out
+                  train on reals + five generators, test on the held-out
+                  sixth. This is the deployment-realistic number — you never
+                  have training data for tomorrow's model.
 
   matrix          the full 6x6: train on one generator, test on each. Answers
                   which generator *families* share artifacts. Evaluated on the
@@ -112,7 +113,7 @@ def run_robustness(
     return pl.DataFrame(rows)
 
 
-def run_logo(
+def run_leave_one_generator_out(
     manifest_path: str | Path,
     cache_dir: str | Path,
     condition: str = "clean",
@@ -370,7 +371,7 @@ def run_all(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rob = run_robustness(manifest_path, cache_dir, fprs)
-    logo = run_logo(manifest_path, cache_dir, fprs=fprs)
+    heldout = run_leave_one_generator_out(manifest_path, cache_dir, fprs=fprs)
     mat, mat_long = run_matrix(manifest_path, cache_dir, fprs=fprs)
     mat_long.write_csv(out_dir / "cross_generator_metrics.csv")
 
@@ -381,7 +382,7 @@ def run_all(
 
     out = {
         "robustness": rob,
-        "logo": logo,
+        "leave_one_generator_out": heldout,
         "matrix": mat,
         "matrix_metrics": mat_long,
         "calibration": cal,
@@ -392,7 +393,7 @@ def run_all(
         out["ensemble"] = ens
 
     rob.write_csv(out_dir / "robustness.csv")
-    logo.write_csv(out_dir / "logo.csv")
+    heldout.write_csv(out_dir / "leave_one_generator_out.csv")
     mat.write_csv(out_dir / "cross_generator_matrix.csv")
     plot_robustness(rob, out_dir / "robustness.png")
     plot_matrix(mat, out_dir / "cross_generator_matrix.png",
