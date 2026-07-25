@@ -588,3 +588,22 @@ def run_all(
         )
     )
     return out
+
+
+# --- Resolution limits -------------------------------------------------------
+# A measured FPR cannot be finer than 1/n_real, and a TPR read at a small FPR
+# budget is set by a handful of images. For this corpus:
+#
+#   full test split (robustness, leave-one-generator-out): 2019 reals
+#       finest FPR = 1/2019 = 0.0005;  FPR=0.01 is ~20 images
+#   matrix cells (restricted to the paired core):           392 reals
+#       finest FPR = 1/392  = 0.0026;  FPR=0.01 is ~4 images
+#
+# Consequences worth carrying into any write-up:
+#   - TPR@1%FPR on a *matrix cell* rests on roughly four real images, so treat
+#     it as indicative rather than precise. TPR@5%FPR (~20 images) is firmer,
+#     and the full-split numbers are firmer still.
+#   - Plotting an ROC below the resolution floor shows interpolation, not data.
+#     The notebook clamps its x-axis to 1/392 for exactly this reason.
+N_REAL_TEST_FULL = 2019
+N_REAL_TEST_PAIRED_CORE = 392

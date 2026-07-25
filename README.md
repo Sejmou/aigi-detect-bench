@@ -201,6 +201,16 @@ These affect interpretation and are **not** fixed by the pipeline above:
    raw scores; `balanced_acc` and TPR@FPR are robust to this, plain accuracy
    is not.
 
+6. **TPR@1%FPR on a *matrix cell* rests on about four images.** A measured FPR
+   cannot be finer than 1/n_real. The full test split has 2,019 reals (finest
+   FPR 0.0005), but the 6×6 matrix is restricted to the paired core, leaving
+   **392 reals per cell** — so the finest resolvable FPR is 1/392 = 0.0026, and
+   a 1 % budget is ~4 images. Treat matrix TPR@1%FPR as indicative, not precise;
+   TPR@5%FPR (~20 images) is firmer, and the robustness and
+   leave-one-generator-out numbers, computed on the full split, are firmer
+   still. The notebook's ROC x-axis is clamped to 1/392 for the same reason —
+   anything to the left of it is interpolation rather than measurement.
+
 ## Step 3 — the format confound is real, and it is enormous
 
 The clearest evidence that normalization was necessary comes from **NPR**

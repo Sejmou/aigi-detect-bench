@@ -280,14 +280,23 @@ def _(mat_metrics, mo):
 def _(OUT, alt, mo, pl, roc_train_pick):
     roc = pl.read_parquet(OUT / "roc_curves.parquet")
 
+    # Each matrix cell is scored on the paired core: 392 real images. The finest
+    # FPR the data can express is therefore 1/392 = 0.0026, and anything plotted to
+    # the left of that is step-interpolation, not measurement. The axis starts there
+    # rather than at an arbitrary 1e-4.
+    ROC_FPR_FLOOR = 1.0 / 392
+
 
     def _roc_plot():
-        _d = roc.filter(pl.col("train_on") == roc_train_pick.value)
+        _d = roc.filter(
+            (pl.col("train_on") == roc_train_pick.value)
+            & (pl.col("fpr") >= ROC_FPR_FLOOR)
+        )
         _curves = alt.Chart(_d).mark_line(interpolate="step-after").encode(
             x=alt.X(
                 "fpr:Q",
                 title="false positive rate (log scale)",
-                scale=alt.Scale(type="log", domain=[1e-4, 1.0]),
+                scale=alt.Scale(type="log", domain=[ROC_FPR_FLOOR, 1.0]),
             ),
             y=alt.Y("tpr:Q", title="true positive rate", scale=alt.Scale(domain=[0, 1])),
             color=alt.Color("tested_on:N", title="tested on"),
@@ -309,7 +318,10 @@ def _(OUT, alt, mo, pl, roc_train_pick):
             (_curves + _budgets).properties(
                 width=520,
                 height=340,
-                title=f"ROC — probe trained on {roc_train_pick.value} (solid = same generator)",
+                title=(
+                    f"ROC — trained on {roc_train_pick.value} "
+                    f"(solid = same generator; axis floor = 1/392, the resolution limit)"
+                ),
             )
         )
 
