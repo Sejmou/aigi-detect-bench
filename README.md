@@ -79,8 +79,9 @@ Five results, in rough order of how much they should change what you do:
    cluster transfer at 0.91–0.98.
 4. **Ensembling is not free.** Averaging the CLIP probe with a below-chance NPR
    cost 0.19 AUROC versus the probe alone.
-5. **Against an adaptive attacker there is no defence here.** PGD at ε=1/255
-   takes the probe to 0.039 AUROC and catches zero fakes at 5% FPR.
+5. **Against an adaptive attacker there is no defence here.** PGD at a
+   one-grey-level perturbation takes the probe from 0.981 to 0.043 AUROC; at
+   ε=8/255 AUROC is exactly 0.0000 — every attacked fake ranks below every real.
 
 Reproduce with:
 
@@ -402,15 +403,29 @@ preprocessing so the perturbation must survive resize and normalisation.
 Threat model: the attacker perturbs **only the fakes** (the goal is evading
 detection, not framing real photographs), on a balanced 500/500 test subset.
 
-| condition | AUROC | TPR@5%FPR |
-|---|---|---|
-| clean (same pipeline) | 0.9807 | 0.910 |
-| **PGD ε = 1/255** | **0.0388** | **0.0000** |
+| condition | AUROC | TPR@1%FPR | TPR@5%FPR |
+|---|---|---|---|
+| clean (same pipeline) | 0.9807 | 0.812 | 0.910 |
+| PGD ε = 1/255 | 0.0426 | 0.000 | 0.002 |
+| PGD ε = 2/255 | 0.0027 | 0.000 | 0.000 |
+| PGD ε = 4/255 | 0.0006 | 0.000 | 0.000 |
+| **PGD ε = 8/255** | **0.0000** | 0.000 | 0.000 |
 
-At the smallest budget tested — a perturbation below the threshold of visibility
-— the detector does not merely lose signal, it **inverts**: AUROC 0.039 means it
-is reliably *wrong*, and TPR@5%FPR of exactly 0.000 means **not one** attacked
-fake is caught at that operating point.
+At the smallest budget tested — a perturbation of **one grey level**, verified by
+direct pixel comparison — the detector does not merely lose signal, it
+**inverts**: AUROC 0.043 means it is reliably *wrong*, and 1 attacked fake in 500
+survives at a 5 % false-positive rate.
+
+**The attack does not saturate at ε=1/255; it keeps going.** AUROC falls
+0.043 → 0.003 → 0.0006 → **0.0000**. That last value is not rounding: at
+ε=8/255 *every* attacked fake scores below *every* real image, a perfect
+inversion of the ranking. Larger budgets are not needed and smaller ones are the
+interesting direction — ε=1/255 is already the point where the perturbation
+stops being representable in 8-bit pixels.
+
+The attacked images are kept (`attack.save_dir`, 500 PNGs per budget, 186 MB
+total) so another detector can be tested against the identical attack without
+re-running PGD.
 
 This is the expected result, and the reason it is reported in its own column
 rather than averaged with anything: a frozen-feature linear probe offers no
