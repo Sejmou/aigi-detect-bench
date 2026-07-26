@@ -704,29 +704,69 @@ def _(mo):
     mo.md("""
     ### Is the attack actually invisible?
 
-    Pick a cover and see for yourself. The rightmost panel amplifies the
-    difference ×40 — at true scale it is one grey level.
+    Pick a cover and see for yourself. The picker searches all 500 attacked covers
+    by **album name, artist or spotify id** — type any of the three. The rightmost
+    panel amplifies the difference ×40 — at true scale it is one grey level.
     """)
     return
 
 
 @app.cell
-def _(ADV, mo):
-    _adv_files = sorted(p.name for p in (ADV / "eps1").glob("*.png"))
+def _(OUT, pl):
+    # Album metadata for the attacked-cover picker. Read from the normalised
+    # manifest rather than the source parquet: it is the same table the experiments
+    # were built from, so every spotify_id under adversarial/ resolves here.
+    adv_meta = {
+        _r["spotify_id"]: _r
+        for _r in pl.read_parquet(OUT / "manifest_normalized.parquet")
+        .select("spotify_id", "album_name", "artist_names", "rank")
+        .unique(subset=["spotify_id"])
+        .to_dicts()
+    }
+
+
+    def adv_label(fname):
+        """Dropdown label for one attacked file. Album name, artist, generator and
+        spotify id all live in the one string, because a searchable dropdown matches
+        on the label — so typing a title, an artist or a raw id all find the cover.
+        """
+        _sid, _, _gen = fname.removesuffix(".png").partition("__")
+        _m = adv_meta.get(_sid, {})
+        return (
+            f"{_m.get('album_name') or '(unknown album)'} — "
+            f"{_m.get('artist_names') or '?'} · {_gen} · {_sid}"
+        )
+
+
+    return adv_label, adv_meta
+
+
+@app.cell
+def _(ADV, adv_label, adv_meta, mo):
+    # Every attacked cover, not a truncated slice: the dropdown is searchable, so
+    # 500 options are browsable by album name, artist or spotify id. Ordered by
+    # streams rank, so scrolling starts at the covers most people would recognise.
+    _adv_files = sorted(
+        (p.name for p in (ADV / "eps1").glob("*.png")),
+        key=lambda f: (adv_meta.get(f.split("__")[0], {}).get("rank") or 10**9, f),
+    )
+    _adv_options = {adv_label(_f): _f for _f in _adv_files}
     adv_pick = mo.ui.dropdown(
-        options=_adv_files[:60],
-        value=_adv_files[0],
+        options=_adv_options,
+        value=next(iter(_adv_options)),
+        searchable=True,
         label="attacked cover",
     )
     eps_pick = mo.ui.radio(
         options=["eps1", "eps2", "eps4", "eps8"], value="eps1", label="budget", inline=True
     )
     mo.hstack([adv_pick, eps_pick], justify="start", gap=2)
+
     return adv_pick, eps_pick
 
 
 @app.cell
-def _(ADV, Image, NORM, adv_pick, base64, eps_pick, io, mo, np):
+def _(ADV, Image, NORM, adv_meta, adv_pick, base64, eps_pick, io, mo, np):
     def _as_png(img, width=230):
         _buf = io.BytesIO()
         img.save(_buf, format="PNG")
@@ -738,7 +778,7 @@ def _(ADV, Image, NORM, adv_pick, base64, eps_pick, io, mo, np):
 
     def _comparison_panel():
         _stem = adv_pick.value.removesuffix(".png")
-        _spotify_id = _stem.split("__")[0]
+        _spotify_id, _, _generator = _stem.partition("__")
         _adv_img = Image.open(ADV / eps_pick.value / adv_pick.value).convert("RGB")
 
         # The attack operates at CLIP's 224px input, so the fake is resampled to the
@@ -749,6 +789,17 @@ def _(ADV, Image, NORM, adv_pick, base64, eps_pick, io, mo, np):
 
         _diff = np.abs(np.asarray(_adv_img, dtype=int) - np.asarray(_fake, dtype=int))
         _amp = Image.fromarray((_diff * 40).clip(0, 255).astype("uint8"), "RGB")
+
+        # Name the selection: with a searchable picker you arrive here by title or
+        # id, and the panels themselves carry no identity.
+        _m = adv_meta.get(_spotify_id, {})
+        _rank = _m.get("rank")
+        _head = mo.md(
+            f"**{_m.get('album_name') or '(unknown album)'}** — "
+            f"{_m.get('artist_names') or '?'}  ·  "
+            f"{'rank ' + str(_rank) if _rank is not None else 'unranked'} by streams (DE)  ·  "
+            f"generator `{_generator}`  ·  id `{_spotify_id}`"
+        )
 
         _panels = []
         _real_path = NORM / "real" / f"{_spotify_id}.jpg"
@@ -766,10 +817,13 @@ def _(ADV, Image, NORM, adv_pick, base64, eps_pick, io, mo, np):
                 ]
             ),
         ]
-        return mo.hstack(_panels, justify="start", gap=1)
+        return mo.vstack(
+            [_head, mo.hstack(_panels, justify="start", gap=1)], gap=0.5
+        )
 
 
     _comparison_panel()
+
     return
 
 
